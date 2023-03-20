@@ -1,0 +1,26 @@
+[licenses]
+unlicensed = "warn"
+allow-osi-fsf-free = "both"
+copyleft = "deny"
+default = "warn"
+unused-allowed-license = "warn"
+confidence-threshold = 0.95
+allow = [
+    "EUPL-1.2",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "Apache-2.0",
+    "0BSD",
+    "BSD-3-Clause",
+    "ISC",
+    "EUPL-1.2"
+]
+[bans]
+multiple-versions="allow"
+
+[advisories]
+unmaintained = "allow"
+vulnerability = "allow"
+
+[licenses.private]
+ignore = true

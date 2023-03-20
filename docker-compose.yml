@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  Opencart_dummy_DB:
+    image: mysql:8.0
+    cap_add:
+      - SYS_NICE
+    restart: always
+    environment:
+      - MYSQL_DATABASE=quotes
+      - MYSQL_ROOT_PASSWORD=mauFJcuf5dhRMQrjj
+    ports:
+      - '4307:3306'
+    volumes:
+      - db:/var/lib/mysql
+      - ./demo-db.sql:/docker-entrypoint-initdb.d/init.sql
+volumes:
+  db:
+    driver: local
