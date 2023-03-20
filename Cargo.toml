@@ -2,6 +2,11 @@
 name = "csql"
 version = "0.1.0"
 edition = "2021"
+license = "CC-BY-NC-ND-4.0"
+authors = ["Radovan Katrenčik"]
+readme = "README.md"
+publish = false
+description = "An assistant tool to easily map a CSV spreadsheets collumns to a database tables' fields. Great for mass uploading products from a manufacturer provided catalog to an e-shop."
 
 [dependencies]
 sqlx = { version = "0.6.2", features = [ "runtime-tokio-native-tls" , "mysql" ] }
