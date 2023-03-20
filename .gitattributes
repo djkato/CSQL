@@ -1,4 +1,4 @@
-licenses.html
-about.hbs
-*.csv
-*.sql
+licenses.html linguist-generated
+about.hbs linguist-generated
+*.csv linguist-generated
+*.sql linguist-generated
