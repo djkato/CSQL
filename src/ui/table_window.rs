@@ -1,7 +1,6 @@
 use crate::backend::backend_manager::Communication;
 use crate::backend::csv_handler::ImportedData;
-use crate::backend::database_handler::Tables;
-use eframe::glow::CONSTANT_COLOR;
+use crate::backend::database_handler::{Tables,TableField};
 use egui::{ComboBox, Context, Ui};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use std::error::Error;
@@ -15,7 +14,10 @@ pub struct SpreadSheetWindow {
     is_file_loaded_receiver: Option<oneshot::Receiver<bool>>,
     is_file_loaded: bool,
     current_table: Option<usize>,
-    is_current_table_described: bool,
+    is_table_described_receiver: Option<oneshot::Receiver<bool>>,
+    is_table_described: bool,
+    is_table_matched_with_headers: bool,
+
 }
 impl SpreadSheetWindow {
     pub fn default(
@@ -27,10 +29,12 @@ impl SpreadSheetWindow {
             sender,
             is_file_loaded_receiver: None,
             is_file_loaded: false,
+            is_table_described_receiver: None,
+            is_table_described: false,
+            is_table_matched_with_headers: false,
             csv_data_handle,
             db_table_data_handle,
             current_table: None,
-            is_current_table_described: false,
         }
     }
 }
@@ -122,23 +126,36 @@ impl SpreadSheetWindow {
             });
 
             /* If a table is selected, try if it's fields are discovered */
-            if let Some(table_i) = self.current_table {
-                if db_table_data.tables.get(table_i).unwrap().fields.is_some() {
-                    self.is_current_table_described = true;
-                } else {
+            if !self.is_table_described{
+                
+                if let Some(table_i) = self.current_table {
+                    if db_table_data.tables.get(table_i).unwrap().fields.is_some() {
+                        self.is_table_described = true;
+                    } else if self.is_table_described_receiver.is_some(){
+                    match self.is_table_described_receiver.as_mut().unwrap().try_recv(){
+                        Ok(res) => {self.is_table_matched_with_headers = res},
+                        Err(e) => println!("Failed receiving is_table_described, {}",e),
+                    }
+                } else{
+                    let (sender, receiver ) = oneshot::channel();
+                    self.is_table_described_receiver = Some(receiver);
                     self.sender
-                        .try_send(Communication::GetTableDescription(table_i))
-                        .unwrap_or_else(|e| println!("Failed asking to describe table, {}", e));
-                }
+                    .try_send(Communication::GetTableDescription(table_i, sender))
+                    .unwrap_or_else(|e| println!("Failed asking to describe table, {}", e));
             }
         }
-        if self.is_current_table_described {
+            }
+        }
+
+        if self.is_table_described {
             self.table_builder(ui);
         }
     }
     fn table_builder(&mut self, ui: &mut Ui) {
         if let Ok(csv_data) = &mut self.csv_data_handle.try_lock() {
             if let Ok(db_table_data) = &mut self.db_table_data_handle.try_lock() {
+                //ref to all fields in curr db table
+                let mut curr_db_table_fields: &mut Vec<TableField> = db_table_data.tables.get_mut(self.current_table.unwrap()).unwrap().fields.as_mut().unwrap();
                 let mut table = TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
@@ -146,7 +163,8 @@ impl SpreadSheetWindow {
                 for _i in 0..csv_data.data.cols() {
                     table = table.column(Column::auto().resizable(true).clip(false));
                 }
-
+                /* If cols got prematched by name */
+                
                 table
                     .column(Column::remainder())
                     .min_scrolled_height(0.0)
@@ -162,33 +180,21 @@ impl SpreadSheetWindow {
                                 } else {
                                     combo_box = ComboBox::new(i, "");
                                 }
+                                
                                 //if any field is assinged to this combobox, show it's text, else "----"
-                                if let Some(selected_field) = db_table_data
-                                    .tables
-                                    .get(self.current_table.unwrap())
-                                    .unwrap()
-                                    .fields
-                                    .as_ref()
-                                    .unwrap()
+                                if let Some(selected_field) = curr_db_table_fields
                                     .iter()
                                     .find(|field| field.mapped_to_col == Some(i))
                                 {
                                     combo_box = combo_box
                                         .selected_text(selected_field.description.field.clone());
-                                } else {
+                                } else{
                                     combo_box = combo_box.selected_text("-----");
                                 }
-
+                                
                                 /* When a Field gets attached to Col,  */
                                 combo_box.show_ui(ui, |ui| {
-                                    for field in db_table_data
-                                        .tables
-                                        .get_mut(self.current_table.unwrap())
-                                        .unwrap()
-                                        .fields
-                                        .as_mut()
-                                        .unwrap()
-                                        .iter_mut()
+                                    for field in curr_db_table_fields.iter_mut()
                                     {
                                         if ui
                                             .selectable_value(
@@ -198,7 +204,7 @@ impl SpreadSheetWindow {
                                             )
                                             .clicked()
                                         {
-                                            self.is_current_table_described = false;
+                                            self.is_table_described = false;
                                             match self.sender.try_send(Communication::TryParseCol(i)){
                                                 Ok(_) => {
                                                     for cel in csv_data.data.iter_col_mut(i) {
@@ -215,9 +221,9 @@ impl SpreadSheetWindow {
                         }
                     })
                     .body(|body| {
-                        body.rows(15., csv_data.data.rows(), |row_index, mut row| {
+                        body.rows(15., csv_data.data.rows() -1, |row_index, mut row| {
                             for curr_cell in
-                                csv_data.data.iter_row_mut(row_index)
+                                csv_data.data.iter_row_mut(row_index+1)
                             {
                                 /* If cell is bound to a field, color it's bg according to is_parsed */
                                 row.col(|ui| {

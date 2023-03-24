@@ -202,30 +202,38 @@ fn parse_tinyint(cell: &mut DataEntry, args: Option<String>) {
     }
 }
 fn parse_date(cell: &mut DataEntry) {
-    //YYYY-MM-DD from ‘1000-01-01’ to ‘9999-12-31’
-    match NaiveDate::parse_from_str(&cell.data, "%Y-%m-%d") {
-        Ok(_) => cell.is_parsed = Some(Ok(())),
-        Err(e) => {
-            cell.is_parsed = Some(Err(Arc::from(<String as Into<
-                Box<dyn Error + Send + Sync>,
-            >>::into(format!(
-                "Invalid date: {}",
-                e
-            )))))
+    //YYYY-MM-DD from ‘1000-01-01’ to ‘9999-12-31’,also ’0000-00-00’
+    if cell.data == "0000-00-00" {
+        cell.is_parsed = Some(Ok(()))
+    } else {
+        match NaiveDate::parse_from_str(&cell.data, "%Y-%m-%d") {
+            Ok(_) => cell.is_parsed = Some(Ok(())),
+            Err(e) => {
+                cell.is_parsed = Some(Err(Arc::from(<String as Into<
+                    Box<dyn Error + Send + Sync>,
+                >>::into(format!(
+                    "Invalid date: {}",
+                    e
+                )))))
+            }
         }
     }
 }
 fn parse_datetime(cell: &mut DataEntry) {
-    //YYYY-MM-DD HH:MM:SS
-    match NaiveDateTime::parse_from_str(&cell.data, "%Y-%m-%d %H:%M:%S") {
-        Ok(_) => cell.is_parsed = Some(Ok(())),
-        Err(e) => {
-            cell.is_parsed = Some(Err(Arc::from(<String as Into<
-                Box<dyn Error + Send + Sync>,
-            >>::into(format!(
-                "Invalid date: {}",
-                e
-            )))))
+    //YYYY-MM-DD HH:MM:SS, also ’0000-00-00’
+    if cell.data == "0000-00-00 00:00:00" {
+        cell.is_parsed = Some(Ok(()))
+    } else {
+        match NaiveDateTime::parse_from_str(&cell.data, "%Y-%m-%d %H:%M:%S") {
+            Ok(_) => cell.is_parsed = Some(Ok(())),
+            Err(e) => {
+                cell.is_parsed = Some(Err(Arc::from(<String as Into<
+                    Box<dyn Error + Send + Sync>,
+                >>::into(format!(
+                    "Invalid date: {}",
+                    e
+                )))))
+            }
         }
     }
 }

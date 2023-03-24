@@ -8,12 +8,12 @@ pub struct Tables {
     pub tables: Vec<Table>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Table {
     pub name: String,
     pub fields: Option<Vec<TableField>>,
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TableField {
     pub description: FieldDescription,
     pub mapped_to_col: Option<usize>,
