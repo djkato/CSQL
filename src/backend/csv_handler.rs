@@ -7,6 +7,8 @@ pub struct ImportedData {
     pub data: grid::Grid<DataEntry>,
     pub path: String,
     pub are_headers: bool,
+    pub parsed_cols: Vec<usize>,
+    pub is_parsed: bool,
 }
 #[derive(Clone, Default)]
 pub struct DataEntry {
@@ -19,7 +21,6 @@ impl ImportedData {
         match csv::Reader::from_path(self.path.as_str()) {
             Ok(mut rdr) => {
                 /* If there are headers, add to first row, else first row is empty */
-
                 if let Ok(headers) = rdr.headers() {
                     self.data = grid::Grid::new(0, 0);
                     let headers_vec: Vec<String> = headers.iter().map(|x| x.to_owned()).collect();
@@ -65,6 +66,8 @@ impl Default for ImportedData {
             data: grid::Grid::new(0, 0),
             path: String::new(),
             are_headers: false,
+            parsed_cols: vec![],
+            is_parsed: false,
         }
     }
 }

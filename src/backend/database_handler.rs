@@ -1,8 +1,11 @@
+use crate::backend::csv_handler::DataEntry;
 use core::num::ParseIntError;
+use eframe::glow::Query;
+use sqlx::mysql::MySqlQueryResult;
 use sqlx::{mysql::MySqlConnectOptions, ConnectOptions};
 use sqlx::{FromRow, MySqlConnection};
 use std::error::Error;
-
+use std::slice::Iter;
 #[derive(Default)]
 pub struct Tables {
     pub tables: Vec<Table>,
@@ -55,6 +58,95 @@ impl Tables {
 }
 
 impl Table {
+    pub async fn transaction_commit(connection: &mut MySqlConnection) -> QueryResult {
+        match sqlx::query("COMMIT").execute(connection).await {
+            Ok(res) => {
+                return QueryResult {
+                    query: "ROLLBACK".to_owned(),
+                    result: Ok(res),
+                }
+            }
+            Err(e) => {
+                return QueryResult {
+                    query: "ROLLBACK".to_owned(),
+                    result: Err(Box::new(e)),
+                }
+            }
+        }
+    }
+    pub async fn transaction_rollback(connection: &mut MySqlConnection) -> QueryResult {
+        match sqlx::query("ROLLBACK").execute(connection).await {
+            Ok(res) => {
+                return QueryResult {
+                    query: "ROLLBACK".to_owned(),
+                    result: Ok(res),
+                }
+            }
+            Err(e) => {
+                return QueryResult {
+                    query: "ROLLBACK".to_owned(),
+                    result: Err(Box::new(e)),
+                }
+            }
+        }
+    }
+    pub async fn start_transaction(connection: &mut MySqlConnection) -> QueryResult {
+        match sqlx::query("BEGIN").execute(connection).await {
+            Ok(res) => {
+                return QueryResult {
+                    query: "ROLLBACK".to_owned(),
+                    result: Ok(res),
+                }
+            }
+            Err(e) => {
+                return QueryResult {
+                    query: "ROLLBACK".to_owned(),
+                    result: Err(Box::new(e)),
+                }
+            }
+        }
+    }
+    pub async fn insert_into_table(
+        &self,
+        connection: &mut MySqlConnection,
+        csv_row: Vec<&DataEntry>,
+    ) -> QueryResult {
+        /* Field_name, data_name */
+        let fields = csv_row
+            .iter()
+            .fold(("".to_owned(), "".to_owned()), |row, next_row| {
+                (
+                    row.0
+                        + ", "
+                        + next_row
+                            .curr_field_description
+                            .as_ref()
+                            .unwrap()
+                            .field
+                            .as_str(),
+                    row.1 + "\'" + next_row.data.as_str() + "\', ",
+                )
+            });
+        let query = format!(
+            "INSERT INTO {}({}) VALUES({})",
+            self.name, fields.0, fields.1
+        );
+        match sqlx::query(&query).execute(connection).await {
+            Ok(res) => {
+                return QueryResult {
+                    query,
+                    result: Ok(res),
+                }
+            }
+            Err(e) => {
+                return QueryResult {
+                    query,
+                    result: Err(Box::new(e)),
+                }
+            }
+        }
+    }
+
     pub async fn describe_table(&mut self, connection: &mut MySqlConnection) {
         let qr_description: Vec<FieldDescription> =
             sqlx::query_as(format!("DESCRIBE {}", self.name).as_str())
@@ -85,6 +177,12 @@ struct QRTables {
     #[sqlx(rename = "Tables_in_quotes")]
     tables_in_quotes: String,
 }
+#[derive(Debug)]
+pub struct QueryResult {
+    pub query: String,
+    pub result: Result<MySqlQueryResult, Box<dyn Error + Send>>,
+}
+
 #[derive(Default, Clone)]
 pub struct DBLoginData {
     pub user_name: String,

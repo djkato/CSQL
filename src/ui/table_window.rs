@@ -1,6 +1,6 @@
 use crate::backend::backend_manager::Communication;
 use crate::backend::csv_handler::ImportedData;
-use crate::backend::database_handler::{Tables,TableField};
+use crate::backend::database_handler::{TableField, Tables};
 use egui::{ComboBox, Context, Ui};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use std::error::Error;
@@ -17,11 +17,12 @@ pub struct SpreadSheetWindow {
     is_table_described_receiver: Option<oneshot::Receiver<bool>>,
     is_table_described: bool,
     is_table_matched_with_headers: bool,
-
+    commit_to_db_sender: Sender<usize>,
 }
 impl SpreadSheetWindow {
     pub fn default(
         sender: Sender<Communication>,
+        commit_to_db_sender: Sender<usize>,
         csv_data_handle: Arc<Mutex<ImportedData>>,
         db_table_data_handle: Arc<Mutex<Tables>>,
     ) -> SpreadSheetWindow {
@@ -35,6 +36,7 @@ impl SpreadSheetWindow {
             csv_data_handle,
             db_table_data_handle,
             current_table: None,
+            commit_to_db_sender,
         }
     }
 }
@@ -58,7 +60,21 @@ impl SpreadSheetWindow {
             if ui.button("Save File").clicked() {
                 println!("Saving file lol");
             }
-            //if ui.button("Current Working Table: ")
+            ui.add_space(ui.available_width() * 0.8);
+
+            let is_csv_parsed: bool;
+            if let Ok(csv_data) = self.csv_data_handle.try_lock() {
+                is_csv_parsed = csv_data.is_parsed.clone();
+            } else {
+                is_csv_parsed = false;
+            }
+            ui.add_enabled_ui(is_csv_parsed, |ui| {
+                if ui.button("Commit to Database").clicked() {
+                    self.commit_to_db_sender
+                        .try_send(self.current_table.unwrap())
+                        .unwrap_or_else(|_| println!("failed to send committodb-UI"))
+                }
+            });
         });
 
         /* if db isn't connected, don't allow imports */
@@ -126,24 +142,28 @@ impl SpreadSheetWindow {
             });
 
             /* If a table is selected, try if it's fields are discovered */
-            if !self.is_table_described{
-                
+            if !self.is_table_described {
                 if let Some(table_i) = self.current_table {
                     if db_table_data.tables.get(table_i).unwrap().fields.is_some() {
                         self.is_table_described = true;
-                    } else if self.is_table_described_receiver.is_some(){
-                    match self.is_table_described_receiver.as_mut().unwrap().try_recv(){
-                        Ok(res) => {self.is_table_matched_with_headers = res},
-                        Err(e) => println!("Failed receiving is_table_described, {}",e),
+                    } else if self.is_table_described_receiver.is_some() {
+                        match self
+                            .is_table_described_receiver
+                            .as_mut()
+                            .unwrap()
+                            .try_recv()
+                        {
+                            Ok(res) => self.is_table_matched_with_headers = res,
+                            Err(e) => println!("Failed receiving is_table_described, {}", e),
+                        }
+                    } else {
+                        let (sender, receiver) = oneshot::channel();
+                        self.is_table_described_receiver = Some(receiver);
+                        self.sender
+                            .try_send(Communication::GetTableDescription(table_i, sender))
+                            .unwrap_or_else(|e| println!("Failed asking to describe table, {}", e));
                     }
-                } else{
-                    let (sender, receiver ) = oneshot::channel();
-                    self.is_table_described_receiver = Some(receiver);
-                    self.sender
-                    .try_send(Communication::GetTableDescription(table_i, sender))
-                    .unwrap_or_else(|e| println!("Failed asking to describe table, {}", e));
-            }
-        }
+                }
             }
         }
 
@@ -155,7 +175,13 @@ impl SpreadSheetWindow {
         if let Ok(csv_data) = &mut self.csv_data_handle.try_lock() {
             if let Ok(db_table_data) = &mut self.db_table_data_handle.try_lock() {
                 //ref to all fields in curr db table
-                let mut curr_db_table_fields: &mut Vec<TableField> = db_table_data.tables.get_mut(self.current_table.unwrap()).unwrap().fields.as_mut().unwrap();
+                let mut curr_db_table_fields: &mut Vec<TableField> = db_table_data
+                    .tables
+                    .get_mut(self.current_table.unwrap())
+                    .unwrap()
+                    .fields
+                    .as_mut()
+                    .unwrap();
                 let mut table = TableBuilder::new(ui)
                     .striped(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
@@ -164,13 +190,19 @@ impl SpreadSheetWindow {
                     table = table.column(Column::auto().resizable(true).clip(false));
                 }
                 /* If cols got prematched by name */
-                
+
                 table
                     .column(Column::remainder())
                     .min_scrolled_height(0.0)
                     .header(20., |mut header| {
                         for i in 0..csv_data.data.cols() {
                             header.col(|ui| {
+                                if csv_data.parsed_cols.contains(&i){
+                                    /* If the whole col is parsed, change header bg to green, else normal */
+                                    ui.style_mut().visuals.override_text_color= Some(egui::Color32::GREEN);
+                                } else {
+                                    ui.style_mut().visuals.override_text_color= Some(egui::Color32::RED);
+                                }
                                 let mut combo_box: ComboBox;
                                 if csv_data.are_headers {
                                     combo_box = ComboBox::new(
@@ -180,7 +212,7 @@ impl SpreadSheetWindow {
                                 } else {
                                     combo_box = ComboBox::new(i, "");
                                 }
-                                
+
                                 //if any field is assinged to this combobox, show it's text, else "----"
                                 if let Some(selected_field) = curr_db_table_fields
                                     .iter()
@@ -191,7 +223,7 @@ impl SpreadSheetWindow {
                                 } else{
                                     combo_box = combo_box.selected_text("-----");
                                 }
-                                
+
                                 /* When a Field gets attached to Col,  */
                                 combo_box.show_ui(ui, |ui| {
                                     for field in curr_db_table_fields.iter_mut()
@@ -214,9 +246,10 @@ impl SpreadSheetWindow {
                                                 }
                                                 Err(e) => println!("failed sending parsecol request, {}",e)
                                             }
-                                        }   
+                                        }
                                     }
                                 });
+                                ui.reset_style();
                             });
                         }
                     })

@@ -1,11 +1,12 @@
 use super::csv_handler::{DataEntry, ImportedData};
-use super::database_handler::{DBLoginData, TableField, Tables};
+use super::database_handler::{DBLoginData, QueryResult, Table, TableField, Tables};
 use super::parser::parse;
+use sqlx::mysql::MySqlQueryResult;
 use sqlx::MySqlConnection;
+use std::error::Error;
 use std::sync::Arc;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::{oneshot, Mutex};
-
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{oneshot, Mutex, MutexGuard};
 pub struct BackendManger {
     pub db_login_data: DBLoginData,
     pub imported_data: ImportedData,
@@ -81,24 +82,20 @@ impl BackendManger {
                         .await;
                     if csv_data.are_headers {
                         match try_match_headers_to_fields(
-                            &mut db_table_data
-                                .tables
-                                .get_mut(table_index)
-                                .unwrap()
-                                .fields
-                                .as_mut()
-                                .unwrap()
-                                .as_mut(),
+                            &mut db_table_data,
+                            table_index,
                             &csv_data.data.iter_row(0),
                         ) {
                             Ok(_) => {
-                                for field in db_table_data
+                                for (col_index, field) in db_table_data
                                     .tables
                                     .get_mut(table_index)
                                     .unwrap()
                                     .fields
                                     .as_mut()
                                     .unwrap()
+                                    .iter_mut()
+                                    .enumerate()
                                 {
                                     println!(
                                         "      > automapping field \"{}\" to col \"{:?}\"",
@@ -110,6 +107,13 @@ impl BackendManger {
                                                 Some(field.description.clone());
                                             parse(cell);
                                         }
+                                    }
+                                    if is_whole_col_parsed(&mut csv_data, col_index) {
+                                        println!("col \"{}\" is parsed whole!", &col_index);
+                                        csv_data.parsed_cols.push(col_index);
+                                    }
+                                    if is_whole_table_parsed(&csv_data) {
+                                        csv_data.is_parsed = true;
                                     }
                                 }
                                 sender.send(true).unwrap_or_else(|e| {
@@ -136,16 +140,107 @@ impl BackendManger {
                             parse(cell);
                         }
                     }
+                    if is_whole_col_parsed(&mut csv_data, col_index) {
+                        println!("col \"{}\" is parsed whole!", &col_index);
+                        csv_data.parsed_cols.push(col_index - 1);
+                    }
+                    if is_whole_table_parsed(&csv_data) {
+                        csv_data.is_parsed = true;
+                    }
+                }
+                Communication::StartInserting(table_index, sender, oneshot_sender) => {
+                    let csv_data = self.csv_data.lock().await;
+                    let db_table_data = self.db_table_data.lock().await;
+                    let table = db_table_data.tables.get(table_index).unwrap();
+                    let trans_start =
+                        Table::start_transaction(self.db_connection.as_mut().unwrap()).await;
+
+                    sender
+                        .send(trans_start)
+                        .await
+                        .unwrap_or_else(|_| println!("failed to send Transaction Start"));
+
+                    let start_i: usize = csv_data.are_headers.into();
+
+                    for i in start_i..csv_data.data.rows() {
+                        let row: Vec<&DataEntry> = csv_data.data[i].iter().collect();
+                        let res = table
+                            .insert_into_table(self.db_connection.as_mut().unwrap(), row)
+                            .await;
+                        println!(
+                            "      | Query: {}\n       > Result: {:?}",
+                            res.query, res.result
+                        );
+                        sender
+                            .send(res)
+                            .await
+                            .unwrap_or_else(|_| println!("failed to send insert into table"));
+                    }
+                    oneshot_sender
+                        .send(true)
+                        .unwrap_or_else(|_| println!("Failed to send end of insertin transaction"));
+                }
+                Communication::TryCommit(sender) => {
+                    sender
+                        .send(Table::transaction_commit(self.db_connection.as_mut().unwrap()).await)
+                        .unwrap_or_else(|_| println!("Failed to respond to TryCommit"));
+                }
+                Communication::TryRollBack(sender) => {
+                    sender
+                        .send(
+                            Table::transaction_rollback(self.db_connection.as_mut().unwrap()).await,
+                        )
+                        .unwrap_or_else(|_| println!("Failed to respond to TryRollBack"));
                 }
             }
         }
     }
 }
-
+pub fn is_whole_table_parsed(csv_data: &MutexGuard<ImportedData>) -> bool {
+    if csv_data.data.cols() == csv_data.parsed_cols.len() {
+        true
+    } else {
+        false
+    }
+}
+pub fn is_whole_col_parsed(csv_data: &mut MutexGuard<ImportedData>, col_index: usize) -> bool {
+    let mut csv_iter = csv_data.data.iter_col(col_index);
+    if csv_data.are_headers {
+        csv_iter.next();
+    }
+    csv_iter.all(|cel| {
+        if let Some(parse) = &cel.is_parsed {
+            match parse {
+                Ok(_) => return true,
+                Err(_) => {
+                    println!(
+                        "Cel \"{}\" in Col \"{}\" isnt parsed :(",
+                        cel.data, col_index
+                    );
+                    return false;
+                }
+            }
+        } else {
+            println!(
+                "Cel \"{}\" in Col \"{}\" isnt parsed :(",
+                cel.data, col_index
+            );
+            false
+        }
+    })
+}
 pub fn try_match_headers_to_fields(
-    db_fields: &mut Vec<TableField>,
+    tables: &mut MutexGuard<Tables>,
+    table_index: usize,
     csv_headers: &std::slice::Iter<'_, DataEntry>,
 ) -> Result<(), ()> {
+    let db_fields = tables
+        .tables
+        .get_mut(table_index)
+        .unwrap()
+        .fields
+        .as_mut()
+        .unwrap();
     let mut has_matched_some = false;
     for field in db_fields {
         for (i, header) in csv_headers.clone().enumerate() {
@@ -170,4 +265,7 @@ pub enum Communication {
     LoadImportFilePath(String, oneshot::Sender<bool>),
     GetTableDescription(usize, oneshot::Sender<bool>),
     TryParseCol(usize),
+    StartInserting(usize, Sender<QueryResult>, oneshot::Sender<bool>),
+    TryCommit(oneshot::Sender<QueryResult>),
+    TryRollBack(oneshot::Sender<QueryResult>),
 }
