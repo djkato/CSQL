@@ -112,21 +112,25 @@ impl Table {
         csv_row: Vec<&DataEntry>,
     ) -> QueryResult {
         /* Field_name, data_name */
-        let fields = csv_row
+        let mut fields = csv_row
             .iter()
             .fold(("".to_owned(), "".to_owned()), |row, next_row| {
                 (
                     row.0
-                        + ", "
                         + next_row
                             .curr_field_description
                             .as_ref()
                             .unwrap()
                             .field
-                            .as_str(),
+                            .as_str()
+                        + ", ",
                     row.1 + "\'" + next_row.data.as_str() + "\', ",
                 )
             });
+        fields.0.pop();
+        fields.0.pop();
+        fields.1.pop();
+        fields.1.pop();
         let query = format!(
             "INSERT INTO {}({}) VALUES({})",
             self.name, fields.0, fields.1

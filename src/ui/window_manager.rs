@@ -71,13 +71,18 @@ impl App for CSQL {
             if let Ok(resp) = self.open_db_transaction_window_receiver.try_recv() {
                 self.should_open_db_transaction_window = Some(resp);
             }
-            if self.should_open_db_transaction_window.is_some() {
-                let db_transaction_window = DBTransactionWindow::default(
-                    self.sender.clone(),
-                    self.should_open_db_transaction_window.unwrap(),
-                );
+            if let Some(db_transaction_window) = self.db_transaction_window.as_mut() {
+                db_transaction_window.show(ctx, ui, frame)
+            }
+            if let Some(working_table_index) = self.should_open_db_transaction_window {
+                let db_transaction_window =
+                    DBTransactionWindow::default(self.sender.clone(), working_table_index);
                 self.db_transaction_window = Some(db_transaction_window);
-                self.db_transaction_window.as_mut().unwrap().show(ctx, ui);
+                self.db_transaction_window
+                    .as_mut()
+                    .unwrap()
+                    .show(ctx, ui, frame);
+                self.should_open_db_transaction_window = None;
             }
 
             /* Changes self if db connection is verified */

@@ -16,3 +16,11 @@ services:
 volumes:
   db:
     driver: local
+
+# To connect to mysql, do:
+# sudo docker exec -it csql-Opencart_dummy_DB-1  /bin/bash
+# mysql -p
+# [password]
+# use quotes;
+# select * from oc_product;
+# clear table: truncate oc_product;
