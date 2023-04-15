@@ -1,6 +1,4 @@
 use egui::{Context, Ui};
-use sqlx::mysql::MySqlQueryResult;
-use std::error::Error;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 
@@ -42,7 +40,7 @@ impl CSQLWindow for DBTransactionWindow {
         ctx: &Context,
         ui: &mut Ui,
         frame: &mut eframe::Frame,
-    ) -> Option<ExitStatus> {
+    ) -> Option<Result<ExitStatus, Box<dyn std::error::Error>>> {
         egui::Window::new("Database Transactions")
             .id(egui::Id::new("Database Transactions"))
             .resizable(false)
@@ -62,7 +60,7 @@ impl CSQLWindow for DBTransactionWindow {
             });
 
         if self.is_finished {
-            return Some(ExitStatus::Ok);
+            return Some(Ok(ExitStatus::Ok));
         }
         None
     }
@@ -129,7 +127,7 @@ impl DBTransactionWindow {
             .auto_shrink([false; 2])
             .stick_to_bottom(true)
             .show(ui, |ui| {
-                let mut table = egui_extras::TableBuilder::new(ui)
+                let table = egui_extras::TableBuilder::new(ui)
                     .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::LEFT))
@@ -155,7 +153,7 @@ impl DBTransactionWindow {
                             ui.strong("Result");
                         });
                     })
-                    .body(|mut body| {
+                    .body(|body| {
                         body.rows(15.0, self.log_history.len(), |row_index, mut row| {
                             let log = self.log_history.get(row_index).unwrap();
                             row.col(|ui| {
@@ -187,6 +185,6 @@ impl DBTransactionWindow {
 }
 
 pub struct OptionsDBTransactionWindow {
-    substitute_zero_dates_for_NULL: bool,
+    substitute_zero_dates_for_null: bool,
     remove_id_field_from_insert: bool,
 }

@@ -37,7 +37,7 @@ impl CSQLWindow for DBLoginWindow {
         ctx: &egui::Context,
         _ui: &mut egui::Ui,
         _frame: &mut eframe::Frame,
-    ) -> Option<ExitStatus> {
+    ) -> Option<Result<ExitStatus, Box<dyn std::error::Error>>> {
         egui::Window::new("MySQL Login")
             .id(egui::Id::new("MySQL Login"))
             .resizable(false)
@@ -51,13 +51,11 @@ impl CSQLWindow for DBLoginWindow {
             });
         if let Some(result) = &self.are_creditentials_verified {
             match result {
-                Ok(_) => return Some(ExitStatus::Ok),
+                Ok(_) => return Some(Ok(ExitStatus::Ok)),
                 Err(e) => {
-                    return Some(ExitStatus::Err(Box::from(<String as Into<
+                    return Some(Err(Box::from(<String as Into<
                         Box<dyn std::error::Error>,
-                    >>::into(
-                        e.to_string()
-                    ))))
+                    >>::into(e.to_string()))))
                 }
             }
         } else {

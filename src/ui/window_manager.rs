@@ -5,12 +5,10 @@ use crate::ui::db_login_window::DBLoginWindow;
 use crate::ui::table_window::SpreadSheetWindow;
 use eframe::{run_native, App, NativeOptions};
 use std::sync::Arc;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
 
 use super::db_transaction_window::DBTransactionWindow;
-use super::{db_login_window, db_transaction_window};
 
 pub fn create_ui(
     sender: Sender<Communication>,
@@ -61,8 +59,11 @@ impl App for CSQL {
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(result) = self.spreadsheet_window.refresh(ctx, ui, frame) {
                 match result {
-                    ExitStatus::StartLoginWindow => self.should_open_transaction_window = true,
-                    ExitStatus::StartTransactionWindow => self.should_open_login_window = true,
+                    Ok(status) => match status {
+                        ExitStatus::StartLoginWindow => self.should_open_transaction_window = true,
+                        ExitStatus::StartTransactionWindow => self.should_open_login_window = true,
+                        _ => {}
+                    },
                     _ => (),
                 }
             };
@@ -71,24 +72,35 @@ impl App for CSQL {
                 if let Some(db_login_window) = self.db_login_window.as_mut() {
                     if let Some(result) = db_login_window.refresh(ctx, ui, frame) {
                         match result {
-                            ExitStatus::Ok => {
+                            Ok(status) => {
                                 self.db_login_window = None;
                                 self.should_open_login_window = false;
                             }
                             _ => (),
                         }
                     }
+                } else {
+                    self.db_login_window = Some(DBLoginWindow::default(self.sender.clone()));
                 }
             }
             if self.should_open_transaction_window {
                 if let Some(db_transaction_window) = self.db_transaction_window.as_mut() {
                     if let Some(result) = db_transaction_window.refresh(ctx, ui, frame) {
                         match result {
-                            ExitStatus::Ok => {
+                            Ok(status) => {
                                 self.db_transaction_window = None;
                                 self.should_open_transaction_window = false;
                             }
                             _ => (),
+                        }
+                    }
+                } else {
+                    if let Ok(db_table_data) = self.db_table_data_handle.try_lock() {
+                        if let Some(cw_table_i) = db_table_data.current_working_table {
+                            self.db_transaction_window = Some(DBTransactionWindow::default(
+                                self.sender.clone(),
+                                cw_table_i,
+                            ))
                         }
                     }
                 }
@@ -103,11 +115,11 @@ pub trait CSQLWindow {
         ctx: &egui::Context,
         ui: &mut egui::Ui,
         frame: &mut eframe::Frame,
-    ) -> Option<ExitStatus>;
+    ) -> Option<Result<ExitStatus, Box<dyn std::error::Error>>>;
 }
+#[derive(Clone, Copy)]
 pub enum ExitStatus {
     StartTransactionWindow,
     StartLoginWindow,
     Ok,
-    Err(Box<dyn std::error::Error>),
 }

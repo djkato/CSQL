@@ -1,5 +1,5 @@
 use super::csv_handler::{DataEntry, ImportedData};
-use super::database_handler::{DBLoginData, QueryResult, Table, TableField, Tables};
+use super::database_handler::{DBLoginData, QueryResult, Table, Tables};
 use super::parser::parse;
 use sqlx::MySqlConnection;
 use std::sync::Arc;
@@ -55,6 +55,9 @@ impl BackendManger {
                             println!("{}", e);
                         }
                     }
+                    let mut db_table_data = self.db_table_data.lock().await;
+                    let mut csv_data = self.csv_data.lock().await;
+                    try_match_headers_to_fields(&mut db_table_data, None, &mut csv_data)
                 }
                 Communication::ImportDBEntries(usize) => {
                     todo!()
@@ -72,45 +75,11 @@ impl BackendManger {
                         .describe_table(&mut self.db_connection.as_mut().unwrap())
                         .await;
 
-                    match try_match_headers_to_fields(
+                    try_match_headers_to_fields(
                         &mut db_table_data,
-                        table_index,
-                        &csv_data.data.iter_row(0),
-                    ) {
-                        Ok(_) => {
-                            /* If some got automapped, try to parse them all */
-                            for (col_index, field) in db_table_data
-                                .tables
-                                .get_mut(table_index)
-                                .unwrap()
-                                .fields
-                                .as_mut()
-                                .unwrap()
-                                .iter_mut()
-                                .enumerate()
-                            {
-                                println!(
-                                    "      > automapping field \"{}\" to col \"{:?}\"",
-                                    &field.description.field, field.mapped_to_col
-                                );
-                                if let Some(col_index) = field.mapped_to_col {
-                                    for cell in csv_data.data.iter_col_mut(col_index) {
-                                        cell.curr_field_description =
-                                            Some(field.description.clone());
-                                        parse(cell);
-                                    }
-                                }
-                                if is_whole_col_parsed(&mut csv_data, col_index) {
-                                    println!("col \"{}\" is parsed whole!", &col_index);
-                                    csv_data.parsed_cols.push(col_index);
-                                }
-                                if is_whole_table_parsed(&csv_data) {
-                                    csv_data.is_parsed = true;
-                                }
-                            }
-                        }
-                        Err(_) => (),
-                    }
+                        Some(table_index),
+                        &mut csv_data,
+                    );
                 }
                 Communication::RemoveRow(usize) => {
                     todo!()
@@ -127,7 +96,7 @@ impl BackendManger {
                     }
                     if is_whole_col_parsed(&mut csv_data, col_index) {
                         println!("col \"{}\" is parsed whole!", &col_index);
-                        csv_data.parsed_cols.push(col_index - 1);
+                        csv_data.parsed_cols.push(col_index);
                     }
                     if is_whole_table_parsed(&csv_data) {
                         csv_data.is_parsed = true;
@@ -198,27 +167,32 @@ pub fn is_whole_col_parsed(csv_data: &mut MutexGuard<ImportedData>, col_index: u
             match parse {
                 Ok(_) => return true,
                 Err(_) => {
-                    println!(
-                        "Cel \"{}\" in Col \"{}\" isnt parsed :(",
-                        cel.data, col_index
-                    );
                     return false;
                 }
             }
         } else {
-            println!(
-                "Cel \"{}\" in Col \"{}\" isnt parsed :(",
-                cel.data, col_index
-            );
             false
         }
     })
 }
 pub fn try_match_headers_to_fields(
     tables: &mut MutexGuard<Tables>,
-    table_index: usize,
-    csv_headers: &std::slice::Iter<'_, DataEntry>,
-) -> Result<(), ()> {
+    table_index: Option<usize>,
+    csv_data: &mut MutexGuard<ImportedData>,
+) {
+    if !csv_data.are_headers || csv_data.data.is_empty() {
+        return;
+    }
+    let final_table_index: usize;
+    if let Some(i) = table_index {
+        final_table_index = i;
+    } else if let Some(cw_table_i) = tables.current_working_table {
+        final_table_index = cw_table_i;
+    } else {
+        return;
+    }
+    let table_index = final_table_index;
+
     let db_fields = tables
         .tables
         .get_mut(table_index)
@@ -228,19 +202,49 @@ pub fn try_match_headers_to_fields(
         .unwrap();
     let mut has_matched_some = false;
     for field in db_fields {
-        for (i, header) in csv_headers.clone().enumerate() {
+        for (i, header) in csv_data.data.iter_row(0).into_iter().enumerate() {
             if &field.description.field == &header.data {
                 field.mapped_to_col = Some(i);
                 has_matched_some = true;
             }
         }
     }
-    match has_matched_some {
-        true => return Ok(()),
-        false => return Err(()),
+
+    if has_matched_some == false
+        || tables.current_working_table.is_none()
+        || tables.tables.is_empty()
+    {
+        return;
+    }
+    /* If some got automapped, try to parse them all */
+    if let Some(table_i) = tables.current_working_table {
+        if let Some(table) = tables.tables.get_mut(table_i) {
+            if let Some(fields) = table.fields.as_mut() {
+                for (col_index, field) in fields.iter().enumerate() {
+                    println!(
+                        "      > automapping field \"{}\" to col \"{:?}\"",
+                        &field.description.field, field.mapped_to_col
+                    );
+                    if let Some(col_index) = field.mapped_to_col {
+                        for cell in csv_data.data.iter_mut() {
+                            cell.curr_field_description = Some(field.description.clone());
+                            parse(cell);
+                        }
+                    }
+                    if is_whole_col_parsed(csv_data, col_index) {
+                        println!("col \"{}\" is parsed whole!", &col_index);
+                        csv_data.parsed_cols.push(col_index);
+                    }
+                    if is_whole_table_parsed(&csv_data) {
+                        csv_data.is_parsed = true;
+                    }
+                }
+            }
+        }
     }
 }
 
+#[derive(Debug)]
 pub enum Communication {
     ValidateCreditentials(
         DBLoginData,
