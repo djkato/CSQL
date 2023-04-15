@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
 use super::db_transaction_window::DBTransactionWindow;
+use super::{db_login_window, db_transaction_window};
 
 pub fn create_ui(
     sender: Sender<Communication>,
@@ -32,15 +33,13 @@ pub fn create_ui(
                     csv_data_handle.clone(),
                     db_table_data_handle.clone(),
                 ),
-                db_login_window: DBLoginWindow::default(sender.clone()),
+                db_login_window: None,
                 db_transaction_window: None,
-                is_db_connection_verified_receiver: None,
                 sender,
-                is_db_connection_verified: false,
                 csv_data_handle,
                 db_table_data_handle,
-                open_db_transaction_window_receiver,
-                should_open_db_transaction_window: None,
+                should_open_transaction_window: false,
+                should_open_login_window: true,
             })
         }),
     )
@@ -48,60 +47,67 @@ pub fn create_ui(
 
 struct CSQL {
     spreadsheet_window: SpreadSheetWindow,
-    db_login_window: DBLoginWindow,
+    db_login_window: Option<DBLoginWindow>,
     db_transaction_window: Option<DBTransactionWindow>,
     sender: Sender<Communication>,
-    is_db_connection_verified_receiver: Option<oneshot::Receiver<bool>>,
-    is_db_connection_verified: bool,
     csv_data_handle: Arc<Mutex<ImportedData>>,
     db_table_data_handle: Arc<Mutex<Tables>>,
-    open_db_transaction_window_receiver: Receiver<usize>,
-    should_open_db_transaction_window: Option<usize>,
+    should_open_transaction_window: bool,
+    should_open_login_window: bool,
 }
 
 impl App for CSQL {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.db_login_window
-                .show(ctx, ui, self.is_db_connection_verified);
-
-            self.spreadsheet_window
-                .show(ctx, ui, self.is_db_connection_verified);
-
-            if let Ok(resp) = self.open_db_transaction_window_receiver.try_recv() {
-                self.should_open_db_transaction_window = Some(resp);
-            }
-            if let Some(db_transaction_window) = self.db_transaction_window.as_mut() {
-                db_transaction_window.show(ctx, ui, frame)
-            }
-            if let Some(working_table_index) = self.should_open_db_transaction_window {
-                let db_transaction_window =
-                    DBTransactionWindow::default(self.sender.clone(), working_table_index);
-                self.db_transaction_window = Some(db_transaction_window);
-                self.db_transaction_window
-                    .as_mut()
-                    .unwrap()
-                    .show(ctx, ui, frame);
-                self.should_open_db_transaction_window = None;
-            }
-
-            /* Changes self if db connection is verified */
-            if let Some(oneshot_receiver) = &mut self.is_db_connection_verified_receiver {
-                if let Ok(boole) = oneshot_receiver.try_recv() {
-                    self.is_db_connection_verified = boole;
-                    self.is_db_connection_verified_receiver = None;
+            if let Some(result) = self.spreadsheet_window.refresh(ctx, ui, frame) {
+                match result {
+                    ExitStatus::StartLoginWindow => self.should_open_transaction_window = true,
+                    ExitStatus::StartTransactionWindow => self.should_open_login_window = true,
+                    _ => (),
                 }
-            } else {
-                let (sed, rec) = oneshot::channel();
-                self.is_db_connection_verified_receiver = Some(rec);
-                match self
-                    .sender
-                    .try_send(Communication::AreCreditentialsValidated(sed))
-                {
-                    Ok(_) => (),
-                    Err(e) => println!("Failed to send-verify db conn oneshot, {}", e),
+            };
+
+            if self.should_open_login_window {
+                if let Some(db_login_window) = self.db_login_window.as_mut() {
+                    if let Some(result) = db_login_window.refresh(ctx, ui, frame) {
+                        match result {
+                            ExitStatus::Ok => {
+                                self.db_login_window = None;
+                                self.should_open_login_window = false;
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            }
+            if self.should_open_transaction_window {
+                if let Some(db_transaction_window) = self.db_transaction_window.as_mut() {
+                    if let Some(result) = db_transaction_window.refresh(ctx, ui, frame) {
+                        match result {
+                            ExitStatus::Ok => {
+                                self.db_transaction_window = None;
+                                self.should_open_transaction_window = false;
+                            }
+                            _ => (),
+                        }
+                    }
                 }
             }
         });
     }
+}
+
+pub trait CSQLWindow {
+    fn refresh(
+        &mut self,
+        ctx: &egui::Context,
+        ui: &mut egui::Ui,
+        frame: &mut eframe::Frame,
+    ) -> Option<ExitStatus>;
+}
+pub enum ExitStatus {
+    StartTransactionWindow,
+    StartLoginWindow,
+    Ok,
+    Err(Box<dyn std::error::Error>),
 }

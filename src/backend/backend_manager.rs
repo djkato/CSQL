@@ -1,9 +1,7 @@
 use super::csv_handler::{DataEntry, ImportedData};
 use super::database_handler::{DBLoginData, QueryResult, Table, TableField, Tables};
 use super::parser::parse;
-use sqlx::mysql::MySqlQueryResult;
 use sqlx::MySqlConnection;
-use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{oneshot, Mutex, MutexGuard};
@@ -43,12 +41,7 @@ impl BackendManger {
                         }
                     }
                 }
-                Communication::AreCreditentialsValidated(sender) => sender
-                    .send(self.db_login_data.is_verified)
-                    .unwrap_or_else(|e| {
-                        println!("Server - Failed answering if credit. validated");
-                    }),
-                Communication::LoadImportFilePath(path, sender) => {
+                Communication::LoadImportFilePath(path) => {
                     self.imported_data.path = path;
                     match self.imported_data.load_csv() {
                         Ok(_) => {
@@ -57,21 +50,19 @@ impl BackendManger {
                             data.are_headers = self.imported_data.are_headers.clone();
                             data.data = self.imported_data.data.clone();
                             data.path = self.imported_data.path.clone();
-
-                            drop(data);
-                            sender.send(true).unwrap_or_else(|err| {
-                                println!("Server - failed to send loaded file callback, {}", err)
-                            })
                         }
                         Err(e) => {
                             println!("{}", e);
-                            sender.send(false).unwrap_or_else(|e| {
-                                println!("Server - Failed answering if imported{}", e)
-                            })
                         }
                     }
                 }
-                Communication::GetTableDescription(table_index, sender) => {
+                Communication::ImportDBEntries(usize) => {
+                    todo!()
+                }
+                Communication::SaveCSV(path) => {
+                    todo!()
+                }
+                Communication::GetTableDescription(table_index) => {
                     let mut db_table_data = self.db_table_data.lock().await;
                     let mut csv_data = self.csv_data.lock().await;
                     db_table_data
@@ -80,58 +71,52 @@ impl BackendManger {
                         .unwrap()
                         .describe_table(&mut self.db_connection.as_mut().unwrap())
                         .await;
-                    if csv_data.are_headers {
-                        match try_match_headers_to_fields(
-                            &mut db_table_data,
-                            table_index,
-                            &csv_data.data.iter_row(0),
-                        ) {
-                            Ok(_) => {
-                                for (col_index, field) in db_table_data
-                                    .tables
-                                    .get_mut(table_index)
-                                    .unwrap()
-                                    .fields
-                                    .as_mut()
-                                    .unwrap()
-                                    .iter_mut()
-                                    .enumerate()
-                                {
-                                    println!(
-                                        "      > automapping field \"{}\" to col \"{:?}\"",
-                                        &field.description.field, field.mapped_to_col
-                                    );
-                                    if let Some(col_index) = field.mapped_to_col {
-                                        for cell in csv_data.data.iter_col_mut(col_index) {
-                                            cell.curr_field_description =
-                                                Some(field.description.clone());
-                                            parse(cell);
-                                        }
-                                    }
-                                    if is_whole_col_parsed(&mut csv_data, col_index) {
-                                        println!("col \"{}\" is parsed whole!", &col_index);
-                                        csv_data.parsed_cols.push(col_index);
-                                    }
-                                    if is_whole_table_parsed(&csv_data) {
-                                        csv_data.is_parsed = true;
+
+                    match try_match_headers_to_fields(
+                        &mut db_table_data,
+                        table_index,
+                        &csv_data.data.iter_row(0),
+                    ) {
+                        Ok(_) => {
+                            /* If some got automapped, try to parse them all */
+                            for (col_index, field) in db_table_data
+                                .tables
+                                .get_mut(table_index)
+                                .unwrap()
+                                .fields
+                                .as_mut()
+                                .unwrap()
+                                .iter_mut()
+                                .enumerate()
+                            {
+                                println!(
+                                    "      > automapping field \"{}\" to col \"{:?}\"",
+                                    &field.description.field, field.mapped_to_col
+                                );
+                                if let Some(col_index) = field.mapped_to_col {
+                                    for cell in csv_data.data.iter_col_mut(col_index) {
+                                        cell.curr_field_description =
+                                            Some(field.description.clone());
+                                        parse(cell);
                                     }
                                 }
-                                sender.send(true).unwrap_or_else(|e| {
-                                    println!(
-                                        "Server - failed to respond to getTableDescription, {}",
-                                        e
-                                    )
-                                });
+                                if is_whole_col_parsed(&mut csv_data, col_index) {
+                                    println!("col \"{}\" is parsed whole!", &col_index);
+                                    csv_data.parsed_cols.push(col_index);
+                                }
+                                if is_whole_table_parsed(&csv_data) {
+                                    csv_data.is_parsed = true;
+                                }
                             }
-                            Err(_) => sender.send(false).unwrap_or_else(|e| {
-                                println!("Server - failed to respond to getTableDescription, {}", e)
-                            }),
                         }
-                    } else {
-                        sender.send(false).unwrap_or_else(|e| {
-                            println!("Server - failed to respond to getTableDescription, {}", e)
-                        });
+                        Err(_) => (),
                     }
+                }
+                Communication::RemoveRow(usize) => {
+                    todo!()
+                }
+                Communication::RemoveCol(usize) => {
+                    todo!()
                 }
                 Communication::TryParseCol(col_index) => {
                     let mut csv_data = self.csv_data.lock().await;
@@ -261,9 +246,12 @@ pub enum Communication {
         DBLoginData,
         oneshot::Sender<Result<(), Box<dyn std::error::Error + Send>>>,
     ),
-    AreCreditentialsValidated(oneshot::Sender<bool>),
-    LoadImportFilePath(String, oneshot::Sender<bool>),
-    GetTableDescription(usize, oneshot::Sender<bool>),
+    LoadImportFilePath(String),
+    GetTableDescription(usize),
+    ImportDBEntries(usize),
+    RemoveCol(usize),
+    RemoveRow(usize),
+    SaveCSV(String),
     TryParseCol(usize),
     StartInserting(usize, Sender<QueryResult>, oneshot::Sender<bool>),
     TryCommit(oneshot::Sender<QueryResult>),

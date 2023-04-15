@@ -1,14 +1,14 @@
 use crate::backend::csv_handler::DataEntry;
 use core::num::ParseIntError;
-use eframe::glow::Query;
 use sqlx::mysql::MySqlQueryResult;
 use sqlx::{mysql::MySqlConnectOptions, ConnectOptions};
-use sqlx::{FromRow, MySqlConnection};
+use sqlx::{Executor, FromRow, MySqlConnection};
 use std::error::Error;
-use std::slice::Iter;
 #[derive(Default)]
 pub struct Tables {
     pub tables: Vec<Table>,
+    pub current_working_table: Option<usize>,
+    pub is_connection_verified: bool,
 }
 
 #[derive(Default, Clone)]
@@ -43,8 +43,10 @@ impl Tables {
             .fetch_all(connection)
             .await
             .unwrap();
-
+        let mut table_i = 0;
         for table in qr_tables {
+            println!("  >Found table:{}. {}", &table_i, &table.tables_in_quotes);
+            table_i += 1;
             self.tables.push({
                 Table {
                     name: table.tables_in_quotes,
@@ -59,23 +61,23 @@ impl Tables {
 
 impl Table {
     pub async fn transaction_commit(connection: &mut MySqlConnection) -> QueryResult {
-        match sqlx::query("COMMIT").execute(connection).await {
+        match connection.execute("COMMIT").await {
             Ok(res) => {
                 return QueryResult {
-                    query: "ROLLBACK".to_owned(),
+                    query: "COMMIT".to_owned(),
                     result: Ok(res),
                 }
             }
             Err(e) => {
                 return QueryResult {
-                    query: "ROLLBACK".to_owned(),
+                    query: "COMMIT".to_owned(),
                     result: Err(Box::new(e)),
                 }
             }
         }
     }
     pub async fn transaction_rollback(connection: &mut MySqlConnection) -> QueryResult {
-        match sqlx::query("ROLLBACK").execute(connection).await {
+        match connection.execute("ROLLBACK").await {
             Ok(res) => {
                 return QueryResult {
                     query: "ROLLBACK".to_owned(),
@@ -91,16 +93,24 @@ impl Table {
         }
     }
     pub async fn start_transaction(connection: &mut MySqlConnection) -> QueryResult {
-        match sqlx::query("BEGIN").execute(connection).await {
-            Ok(res) => {
-                return QueryResult {
-                    query: "ROLLBACK".to_owned(),
-                    result: Ok(res),
+        match connection.execute("SET autocommit = OFF").await {
+            Ok(_) => match connection.execute("BEGIN").await {
+                Ok(res) => {
+                    return QueryResult {
+                        query: "BEGIN".to_owned(),
+                        result: Ok(res),
+                    }
                 }
-            }
+                Err(e) => {
+                    return QueryResult {
+                        query: "BEGIN".to_owned(),
+                        result: Err(Box::new(e)),
+                    }
+                }
+            },
             Err(e) => {
                 return QueryResult {
-                    query: "ROLLBACK".to_owned(),
+                    query: "SET autocommit = OFF".to_owned(),
                     result: Err(Box::new(e)),
                 }
             }
@@ -127,6 +137,7 @@ impl Table {
                     row.1 + "\'" + next_row.data.as_str() + "\', ",
                 )
             });
+        /* remove last ", " from both */
         fields.0.pop();
         fields.0.pop();
         fields.1.pop();
@@ -187,7 +198,7 @@ pub struct QueryResult {
     pub result: Result<MySqlQueryResult, Box<dyn Error + Send>>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct DBLoginData {
     pub user_name: String,
     pub database: String,
