@@ -158,16 +158,19 @@ fn parse_decimal(cell: &mut DataEntry, args: Option<String>) {
     if let Some(num_args) = process_args(args) {
         let num_parse_res: Result<f32, ParseFloatError> = cell.data.parse();
         if let Ok(_) = num_parse_res {
-            let dot_i = cell.data.find(".").unwrap();
-            // -1 cuz the dot is there
-            let count_to_dot = cell.data.chars().count() as u32;
-            let count_from_dot = cell.data.chars().skip(dot_i + 1).count() as u32;
-            if count_to_dot - 1 <= num_args[0] && count_from_dot >= num_args[1] {
-                cell.is_parsed = Some(Ok(()));
-            } else {
-                cell.is_parsed = Some(Err(Arc::from(<&str as Into<
-                    Box<dyn Error + Send + Sync>,
-                >>::into("too many numbers"))))
+            if let Some(dot_i) = cell.data.find(".") {
+                // -1 cuz the dot is there
+                let count_to_dot = cell.data.chars().count() as u32;
+                let count_from_dot = cell.data.chars().skip(dot_i + 1).count() as u32;
+                if count_to_dot - 1 <= num_args[0] && count_from_dot >= num_args[1] {
+                    cell.is_parsed = Some(Ok(()));
+                } else {
+                    cell.is_parsed = Some(Err(Arc::from(<&str as Into<
+                        Box<dyn Error + Send + Sync>,
+                    >>::into(
+                        "too many numbers"
+                    ))))
+                }
             }
         } else {
             cell.is_parsed = Some(Err(Arc::from(<&str as Into<

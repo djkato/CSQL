@@ -1,6 +1,7 @@
 use super::csv_handler::{DataEntry, ImportedData};
 use super::database_handler::{DBLoginData, QueryResult, Table, Tables};
 use super::parser::parse;
+use if_chain::if_chain;
 use sqlx::MySqlConnection;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -183,61 +184,51 @@ pub fn try_match_headers_to_fields(
     if !csv_data.are_headers || csv_data.data.is_empty() {
         return;
     }
-    let final_table_index: usize;
-    if let Some(i) = table_index {
-        final_table_index = i;
-    } else if let Some(cw_table_i) = tables.current_working_table {
-        final_table_index = cw_table_i;
+    let new_i: usize;
+    if let Some(table_index) = table_index.or(tables.current_working_table) {
+        new_i = table_index;
     } else {
         return;
     }
-    let table_index = final_table_index;
-
-    let db_fields = tables
-        .tables
-        .get_mut(table_index)
-        .unwrap()
-        .fields
-        .as_mut()
-        .unwrap();
+    let table_index = new_i;
+    println!("Trying to automatch table \"{}\"...", table_index);
     let mut has_matched_some = false;
-    for field in db_fields {
-        for (i, header) in csv_data.data.iter_row(0).into_iter().enumerate() {
-            if &field.description.field == &header.data {
-                field.mapped_to_col = Some(i);
-                has_matched_some = true;
+    if let Some(db_fields) = tables.tables.get_mut(table_index).unwrap().fields.as_mut() {
+        for field in db_fields {
+            for (i, header) in csv_data.data.iter_row(0).into_iter().enumerate() {
+                if &field.description.field == &header.data {
+                    field.mapped_to_col = Some(i);
+                    has_matched_some = true;
+                }
             }
         }
     }
-
-    if has_matched_some == false
-        || tables.current_working_table.is_none()
-        || tables.tables.is_empty()
-    {
+    if !has_matched_some {
         return;
     }
+    println!("Autommapped some!");
     /* If some got automapped, try to parse them all */
-    if let Some(table_i) = tables.current_working_table {
-        if let Some(table) = tables.tables.get_mut(table_i) {
-            if let Some(fields) = table.fields.as_mut() {
-                for (col_index, field) in fields.iter().enumerate() {
+    if_chain! {
+        if let Some(table) = tables.tables.get_mut(table_index);
+        if let Some(fields) = table.fields.as_mut();
+        then {
+            for (field_index, field) in fields.iter().enumerate() {
+                if let Some(col_index) = field.mapped_to_col {
                     println!(
                         "      > automapping field \"{}\" to col \"{:?}\"",
                         &field.description.field, field.mapped_to_col
                     );
-                    if let Some(col_index) = field.mapped_to_col {
-                        for cell in csv_data.data.iter_mut() {
-                            cell.curr_field_description = Some(field.description.clone());
-                            parse(cell);
-                        }
+                    for cell in csv_data.data.iter_col_mut(col_index) {
+                        cell.curr_field_description = Some(field.description.clone());
+                        parse(cell);
                     }
-                    if is_whole_col_parsed(csv_data, col_index) {
-                        println!("col \"{}\" is parsed whole!", &col_index);
-                        csv_data.parsed_cols.push(col_index);
-                    }
-                    if is_whole_table_parsed(&csv_data) {
-                        csv_data.is_parsed = true;
-                    }
+                }
+                if is_whole_col_parsed(csv_data, field_index) {
+                    println!("col \"{}\" is parsed whole!", &field_index);
+                    csv_data.parsed_cols.push(field_index);
+                }
+                if is_whole_table_parsed(&csv_data) {
+                    csv_data.is_parsed = true;
                 }
             }
         }

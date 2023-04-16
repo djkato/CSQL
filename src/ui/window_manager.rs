@@ -1,14 +1,14 @@
+use super::db_transaction_window::DBTransactionWindow;
 use crate::backend::backend_manager::Communication;
 use crate::backend::csv_handler::ImportedData;
 use crate::backend::database_handler::Tables;
 use crate::ui::db_login_window::DBLoginWindow;
 use crate::ui::table_window::SpreadSheetWindow;
 use eframe::{run_native, App, NativeOptions};
+use if_chain::*;
 use std::sync::Arc;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
-
-use super::db_transaction_window::DBTransactionWindow;
 
 pub fn create_ui(
     sender: Sender<Communication>,
@@ -60,8 +60,11 @@ impl App for CSQL {
             if let Some(result) = self.spreadsheet_window.refresh(ctx, ui, frame) {
                 match result {
                     Ok(status) => match status {
-                        ExitStatus::StartLoginWindow => self.should_open_transaction_window = true,
-                        ExitStatus::StartTransactionWindow => self.should_open_login_window = true,
+                        ExitStatus::StartLoginWindow => self.should_open_login_window = true,
+                        ExitStatus::StartTransactionWindow => {
+                            self.should_open_transaction_window = true;
+                            println!("should_open_transaction_window");
+                        }
                         _ => {}
                     },
                     _ => (),
@@ -83,7 +86,9 @@ impl App for CSQL {
                     self.db_login_window = Some(DBLoginWindow::default(self.sender.clone()));
                 }
             }
+
             if self.should_open_transaction_window {
+                println!("inside if.shoud...");
                 if let Some(db_transaction_window) = self.db_transaction_window.as_mut() {
                     if let Some(result) = db_transaction_window.refresh(ctx, ui, frame) {
                         match result {
@@ -95,14 +100,17 @@ impl App for CSQL {
                         }
                     }
                 } else {
+                    println!("No transaction window, creating...");
                     if let Ok(db_table_data) = self.db_table_data_handle.try_lock() {
+                        println!("got a db_lock");
                         if let Some(cw_table_i) = db_table_data.current_working_table {
+                            println!("Found a current_working _table");
                             self.db_transaction_window = Some(DBTransactionWindow::default(
                                 self.sender.clone(),
                                 cw_table_i,
                             ))
                         }
-                    }
+                    };
                 }
             }
         });

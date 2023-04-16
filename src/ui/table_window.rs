@@ -4,6 +4,7 @@ use crate::backend::csv_handler::ImportedData;
 use crate::backend::database_handler::{TableField, Tables};
 use egui::{ComboBox, Context, Ui};
 use egui_extras::{Column, TableBuilder};
+use if_chain::if_chain;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -43,7 +44,7 @@ impl CSQLWindow for SpreadSheetWindow {
         frame: &mut eframe::Frame,
     ) -> Option<Result<ExitStatus, Box<dyn std::error::Error>>> {
         self.ui(ui, ctx);
-        if let Some(return_status) = self.return_status {
+        if let Some(return_status) = self.return_status.clone() {
             self.return_status = None;
             return Some(Ok(return_status));
         }
@@ -109,16 +110,119 @@ impl SpreadSheetWindow {
             }
         });
         SpreadSheetWindow::preview_files_being_dropped(ctx);
+        /*All the dzum checks before making the window... */
 
-        if self.current_table.is_some() {
-            ui.group(|ui| {
-                egui::ScrollArea::horizontal().show(ui, |ui| {
-                    self.table_builder(ui)
-                        .unwrap_or_else(|e| println!("Table un-intd, {:?}", e));
-                });
-            });
+        if_chain! {
+        if let Some(current_table) = self.current_table;
+        if let Ok(csv_data) = &mut self.csv_data_handle.try_lock();
+        if let Ok(db_table_data) = &mut self.db_table_data_handle.try_lock();
+        if !csv_data.data.is_empty();
+        if let Some(curr_db_table) = db_table_data.tables.get_mut(current_table);
+            then {
+                if let Some(curr_db_table_fields) = curr_db_table.fields.as_mut() {
+                    ui.group(|ui| {
+                        egui::ScrollArea::horizontal().show(ui, |ui| {
+                            SpreadSheetWindow::table_builder(
+                                &mut self.sender,
+                                ui,
+                                csv_data,
+                                curr_db_table_fields,
+                            )
+                        });
+                    });
+                } else {
+                    if !self.is_table_description_request_sent {
+                        if let Ok(mesg) = self.sender.try_send(
+                            Communication::GetTableDescription(self.current_table.unwrap()),
+                        ) {}
+                    }
+                }
+            } else {
+                ui.centered_and_justified(|ui| ui.heading("Import or Drag and Drop a file..."));
+            }
         }
     }
+    fn table_builder(
+        sender: &mut Sender<Communication>,
+        ui: &mut Ui,
+        csv_data: &mut MutexGuard<ImportedData>,
+        curr_db_table_fields: &mut Vec<TableField>,
+    ) {
+        let table = TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            /*First collumn for row actions */
+            .column(Column::auto().at_most(30.0).resizable(false).clip(false));
+
+        table
+            .columns(
+                Column::auto().resizable(true).clip(false),
+                csv_data.data.cols(),
+            )
+            .min_scrolled_height(0.0)
+            .header(20., |mut header| {
+                /* First Col for row mutators */
+                header.col(|ui| {});
+                SpreadSheetWindow::add_header_cols(
+                    &mut header,
+                    csv_data,
+                    curr_db_table_fields,
+                    sender,
+                );
+            })
+            .body(|body| {
+                body.rows(
+                    15.,
+                    csv_data.data.rows() - csv_data.are_headers as usize,
+                    |row_index, mut row| {
+                        let headers_i_offset = csv_data.are_headers as usize;
+                        row.col(|ui| {
+                            if ui.button("x").clicked() {
+                                if let Ok(_) = sender.try_send(Communication::RemoveRow(row_index))
+                                {
+                                };
+                            }
+                        });
+                        for curr_cell in csv_data.data.iter_row_mut(row_index + headers_i_offset) {
+                            /* If cell is bound to a field, color it's bg according to is_parsed */
+                            row.col(|ui| {
+                                let mut err: Option<Arc<dyn Error>> = None;
+                                if curr_cell.curr_field_description.is_some() {
+                                    match &curr_cell.is_parsed {
+                                        Some(parse) => match parse {
+                                            Ok(_) => {
+                                                ui.style_mut().visuals.extreme_bg_color =
+                                                    egui::Color32::DARK_GREEN
+                                            }
+                                            Err(arc) => {
+                                                err = Some(arc.clone());
+                                                ui.style_mut().visuals.extreme_bg_color =
+                                                    egui::Color32::DARK_RED;
+                                            }
+                                        },
+                                        None => {
+                                            ui.style_mut().visuals.extreme_bg_color =
+                                                egui::Color32::DARK_GRAY
+                                        }
+                                    }
+                                }
+                                if let Some(err) = err {
+                                    ui.text_edit_singleline(&mut curr_cell.data)
+                                        .on_hover_text(format!("{}", err));
+                                } else {
+                                    ui.text_edit_singleline(&mut curr_cell.data);
+                                }
+
+                                if curr_cell.curr_field_description.is_some() {
+                                    ui.reset_style();
+                                }
+                            });
+                        }
+                    },
+                );
+            });
+    }
+
     fn table_options(&mut self, ui: &mut Ui) {
         /* Create table select option, only enable if the tables are discovered yet*/
         if let Ok(db_table_data) = &mut self.db_table_data_handle.try_lock() {
@@ -132,114 +236,33 @@ impl SpreadSheetWindow {
                 /* autoselect oc_product in debug mode */
                 if cfg!(debug_assertions) && self.current_table.is_none() {
                     self.current_table = Some(88);
+                    db_table_data.current_working_table = Some(88);
                     if let Some(table_88) = &db_table_data.tables.get(88) {
                         select_table = select_table.selected_text(table_88.name.clone());
                     }
                 }
                 ui.vertical(|ui| {
                     select_table.show_ui(ui, |ui| {
-                        for (table_i, table) in db_table_data.tables.iter().enumerate() {
-                            ui.selectable_value(
-                                &mut self.current_table,
-                                Some(table_i.clone()),
-                                &table.name,
-                            );
+                        let mut current_working_table_i = None;
+                        for (table_i, table) in db_table_data.tables.iter_mut().enumerate() {
+                            if ui
+                                .selectable_value(
+                                    &mut self.current_table,
+                                    Some(table_i.clone()),
+                                    &table.name,
+                                )
+                                .clicked()
+                            {
+                                current_working_table_i = Some(table_i);
+                            };
+                        }
+                        if let Some(current_working_table_i) = current_working_table_i {
+                            db_table_data.current_working_table = Some(current_working_table_i);
                         }
                     });
                 });
             });
         }
-    }
-    fn table_builder(&mut self, ui: &mut Ui) -> Result<(), Box<dyn std::error::Error>> {
-        if let Ok(csv_data) = &mut self.csv_data_handle.try_lock() {
-            if let Ok(db_table_data) = &mut self.db_table_data_handle.try_lock() {
-                //ref to all fields in curr db table
-                let mut curr_db_table_fields: &mut Vec<TableField> = match db_table_data
-                    .tables
-                    .get_mut(self.current_table.unwrap())
-                    .ok_or("no current table")?
-                    .fields
-                    .as_mut()
-                    .ok_or("no fields yet")
-                {
-                    Ok(val) => val,
-                    Err(e) => {
-                        if !self.is_table_description_request_sent {
-                            self.sender.try_send(Communication::GetTableDescription(
-                                self.current_table.unwrap(),
-                            ))?;
-                            self.is_table_description_request_sent = true;
-                        }
-                        return Err(Box::from(
-                            <String as Into<Box<dyn std::error::Error>>>::into(e.to_string()),
-                        ));
-                    }
-                };
-                if csv_data.data.is_empty() {
-                    return Err(<String as Into<Box<dyn std::error::Error>>>::into(
-                        "no rows yet".to_string(),
-                    ));
-                }
-                let table = TableBuilder::new(ui)
-                    .striped(true)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    /*First collumn for row actions */
-                    .column(Column::auto().at_most(30.0).resizable(false).clip(false));
-
-                table
-                .columns(
-                        Column::auto().resizable(true).clip(false),
-                        csv_data.data.cols(),
-                    )
-                    .min_scrolled_height(0.0)
-                    .header(20., |mut header| {
-                        /* First Col for row mutators */
-                        header.col(|ui|{
-                        });
-                        SpreadSheetWindow::add_header_cols(&mut header, csv_data,&mut curr_db_table_fields, &mut self.sender);
-                    })
-                    .body(|body| {
-                        body.rows(15., csv_data.data.rows() - csv_data.are_headers as usize, |row_index, mut row| {
-                            let headers_i_offset = csv_data.are_headers as usize;
-                            row.col(|ui|{
-                                if ui.button("x").clicked(){}
-                            });
-                            for curr_cell in
-                                csv_data.data.iter_row_mut(row_index + headers_i_offset)
-                            {
-                                /* If cell is bound to a field, color it's bg according to is_parsed */
-                                row.col(|ui| {
-                                    let mut err: Option<Arc<dyn Error>> = None;
-                                    if curr_cell.curr_field_description.is_some() {
-                                        match &curr_cell.is_parsed{
-                                            Some(parse) => match parse{
-                                                Ok(_) => ui.style_mut().visuals.extreme_bg_color = egui::Color32::DARK_GREEN,
-                                                Err(arc) => {
-                                                    err = Some(arc.clone());
-                                                    ui.style_mut().visuals.extreme_bg_color = egui::Color32::DARK_RED;
-                                                }
-                                            }
-                                            None => ui.style_mut().visuals.extreme_bg_color = egui::Color32::DARK_GRAY,
-                                        }
-                                    }
-                                    if err.is_some(){
-                                        ui.text_edit_singleline(&mut curr_cell.data).on_hover_text(format!("{}", &err.unwrap()));
-                                    } else{
-                                        ui.text_edit_singleline(&mut curr_cell.data);
-                                    }
-
-                                    if curr_cell.curr_field_description.is_some() {
-                                        ui.reset_style();
-                                    }
-                                });
-                            }
-                        });
-                    });
-            }
-        } else {
-            ui.centered_and_justified(|ui| ui.heading("Drag and drop or Open a file..."));
-        }
-        Ok(())
     }
 }
 
@@ -253,7 +276,9 @@ impl SpreadSheetWindow {
         for i in 0..csv_data.data.cols() {
             header.col(|ui| {
                 ui.vertical_centered_justified(|ui| {
-                    if ui.button("x").clicked() {}
+                    if ui.button("x").clicked() {
+                        if let Ok(_) = sender.try_send(Communication::RemoveCol(i)) {}
+                    }
                     if csv_data.parsed_cols.contains(&i) {
                         /* If the whole col is parsed, change header bg to green, else normal */
                         ui.style_mut().visuals.override_text_color = Some(egui::Color32::GREEN);
@@ -340,12 +365,12 @@ impl SpreadSheetWindow {
             } else {
                 return;
             }
-            self.sender
-                .try_send(Communication::LoadImportFilePath(
-                    final_path.display().to_string(),
-                ))
-                .unwrap_or_else(|err| println!("failed to send loadimportpath, {}", err));
         }
+        self.sender
+            .try_send(Communication::LoadImportFilePath(
+                final_path.display().to_string(),
+            ))
+            .unwrap_or_else(|err| println!("failed to send loadimportpath, {}", err));
     }
 
     pub fn open_dropped_file(&mut self, path: &egui::InputState) {

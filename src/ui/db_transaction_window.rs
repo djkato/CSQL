@@ -41,6 +41,7 @@ impl CSQLWindow for DBTransactionWindow {
         ui: &mut Ui,
         frame: &mut eframe::Frame,
     ) -> Option<Result<ExitStatus, Box<dyn std::error::Error>>> {
+        println!("Opening Transaction window...");
         egui::Window::new("Database Transactions")
             .id(egui::Id::new("Database Transactions"))
             .resizable(false)

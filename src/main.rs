@@ -1,5 +1,5 @@
-#![cfg_attr(not(debug_assertions), deny(dead_code), deny(unused_variables))]
-#![cfg_attr(debug_assertions, allow(dead_code), allow(unused_variables))]
+//#![cfg_attr(not(debug_assertions), deny(dead_code), deny(unused_variables))]
+//#![cfg_attr(debug_assertions, allow(dead_code), allow(unused_variables))]
 mod backend;
 mod ui;
 use backend::backend_manager::BackendManger;
