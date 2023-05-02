@@ -100,17 +100,9 @@ impl App for CSQL {
                         }
                     }
                 } else {
-                    println!("No transaction window, creating...");
-                    if let Ok(db_table_data) = self.db_table_data_handle.try_lock() {
-                        println!("got a db_lock");
-                        if let Some(cw_table_i) = db_table_data.current_working_table {
-                            println!("Found a current_working _table");
-                            self.db_transaction_window = Some(DBTransactionWindow::default(
-                                self.sender.clone(),
-                                cw_table_i,
-                            ))
-                        }
-                    };
+                    println!("Found a current_working _table");
+                    self.db_transaction_window =
+                        Some(DBTransactionWindow::default(self.sender.clone()))
                 }
             }
         });

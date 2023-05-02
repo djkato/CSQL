@@ -60,8 +60,18 @@ impl BackendManger {
                     let mut csv_data = self.csv_data.lock().await;
                     try_match_headers_to_fields(&mut db_table_data, None, &mut csv_data)
                 }
-                Communication::ImportDBEntries(usize) => {
-                    todo!()
+
+                Communication::ImportDBEntries => {
+                    let mut db_table_data = self.db_table_data.lock().await;
+                    let mut csv_data = self.csv_data.lock().await;
+
+                    if let Some(current_working_table_i) = db_table_data.current_working_table {
+                        if let Some(current_working_table) =
+                            db_table_data.tables.get_mut(current_working_table_i)
+                        {
+                            todo!();
+                        }
+                    }
                 }
                 Communication::SaveCSV(path) => {
                     todo!()
@@ -82,11 +92,13 @@ impl BackendManger {
                         &mut csv_data,
                     );
                 }
-                Communication::RemoveRow(usize) => {
-                    todo!()
+                Communication::RemoveRow(i) => {
+                    let mut csv_data = self.csv_data.lock().await;
+                    csv_data.data.remove_row(i);
                 }
-                Communication::RemoveCol(usize) => {
-                    todo!()
+                Communication::RemoveCol(i) => {
+                    let mut csv_data = self.csv_data.lock().await;
+                    csv_data.data.remove_col(i);
                 }
                 Communication::TryParseCol(col_index) => {
                     let mut csv_data = self.csv_data.lock().await;
@@ -103,9 +115,48 @@ impl BackendManger {
                         csv_data.is_parsed = true;
                     }
                 }
-                Communication::StartInserting(table_index, sender, oneshot_sender) => {
+                Communication::StartInserting(sender, oneshot_sender) => {
                     let csv_data = self.csv_data.lock().await;
                     let db_table_data = self.db_table_data.lock().await;
+                    let table_index = db_table_data.current_working_table.unwrap();
+                    let table = db_table_data.tables.get(table_index).unwrap();
+
+                    let trans_start =
+                        Table::start_transaction(self.db_connection.as_mut().unwrap()).await;
+                    sender
+                        .send(trans_start)
+                        .await
+                        .unwrap_or_else(|_| println!("db- failed to send Transaction Start"));
+
+                    let start_i: usize = csv_data.are_headers.into();
+
+                    let res = table
+                        .truncate_table(self.db_connection.as_mut().unwrap())
+                        .await;
+                    sender.send(res).await.unwrap_or_else(|_| {
+                        println!("db - failed to send start of insert into table")
+                    });
+                    for i in start_i..csv_data.data.rows() {
+                        let row: Vec<&DataEntry> = csv_data.data[i].iter().collect();
+                        let res = table
+                            .insert_into_table(self.db_connection.as_mut().unwrap(), row)
+                            .await;
+                        println!(
+                            "      | Query: {}\n       > Result: {:?}",
+                            res.query, res.result
+                        );
+                        sender.send(res).await.unwrap_or_else(|_| {
+                            println!("db - failed to send end of insert into table")
+                        });
+                    }
+                    oneshot_sender.send(true).unwrap_or_else(|_| {
+                        println!("db - failed to send end of insert into table")
+                    });
+                }
+                Communication::StartAppending(sender, oneshot_sender) => {
+                    let csv_data = self.csv_data.lock().await;
+                    let db_table_data = self.db_table_data.lock().await;
+                    let table_index = db_table_data.current_working_table.unwrap();
                     let table = db_table_data.tables.get(table_index).unwrap();
                     let trans_start =
                         Table::start_transaction(self.db_connection.as_mut().unwrap()).await;
@@ -113,7 +164,7 @@ impl BackendManger {
                     sender
                         .send(trans_start)
                         .await
-                        .unwrap_or_else(|_| println!("failed to send Transaction Start"));
+                        .unwrap_or_else(|_| println!("db- failed to send Transaction Start"));
 
                     let start_i: usize = csv_data.are_headers.into();
 
@@ -129,11 +180,11 @@ impl BackendManger {
                         sender
                             .send(res)
                             .await
-                            .unwrap_or_else(|_| println!("failed to send insert into table"));
+                            .unwrap_or_else(|_| println!("db - failed to send append to table"));
                     }
                     oneshot_sender
                         .send(true)
-                        .unwrap_or_else(|_| println!("Failed to send end of insertin transaction"));
+                        .unwrap_or_else(|_| println!("Failed to send end of append transaction"));
                 }
                 Communication::TryCommit(sender) => {
                     sender
@@ -243,12 +294,13 @@ pub enum Communication {
     ),
     LoadImportFilePath(String),
     GetTableDescription(usize),
-    ImportDBEntries(usize),
+    ImportDBEntries,
     RemoveCol(usize),
     RemoveRow(usize),
     SaveCSV(String),
     TryParseCol(usize),
-    StartInserting(usize, Sender<QueryResult>, oneshot::Sender<bool>),
+    StartAppending(Sender<QueryResult>, oneshot::Sender<bool>),
+    StartInserting(Sender<QueryResult>, oneshot::Sender<bool>),
     TryCommit(oneshot::Sender<QueryResult>),
     TryRollBack(oneshot::Sender<QueryResult>),
 }

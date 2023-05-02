@@ -15,13 +15,9 @@ pub struct DBTransactionWindow {
     is_log_finished: bool,
     is_finished: bool,
     final_result_receiver: Option<oneshot::Receiver<QueryResult>>,
-    working_table_index: usize,
 }
 impl DBTransactionWindow {
-    pub fn default(
-        sender: Sender<Communication>,
-        working_table_index: usize,
-    ) -> DBTransactionWindow {
+    pub fn default(sender: Sender<Communication>) -> DBTransactionWindow {
         DBTransactionWindow {
             sender,
             log_history: vec![],
@@ -30,7 +26,6 @@ impl DBTransactionWindow {
             final_result_receiver: None,
             is_log_finished_receiver: None,
             is_log_finished: false,
-            working_table_index,
         }
     }
 }
@@ -92,11 +87,7 @@ impl DBTransactionWindow {
             self.is_log_finished_receiver = Some(finished_receiver);
             self.logs_receiver = Some(log_receiver);
             self.sender
-                .try_send(Communication::StartInserting(
-                    self.working_table_index,
-                    log_sender,
-                    finished_sender,
-                ))
+                .try_send(Communication::StartAppending(log_sender, finished_sender))
                 .unwrap_or_else(|_| println!("Failed to send startInserting"));
         }
     }
@@ -188,4 +179,10 @@ impl DBTransactionWindow {
 pub struct OptionsDBTransactionWindow {
     substitute_zero_dates_for_null: bool,
     remove_id_field_from_insert: bool,
+}
+
+pub enum TransactionType {
+    Append,
+    Save,
+    Import,
 }

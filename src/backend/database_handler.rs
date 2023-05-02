@@ -116,6 +116,42 @@ impl Table {
             }
         }
     }
+    pub async fn truncate_table(&self, connection: &mut MySqlConnection) -> QueryResult {
+        match connection
+            .execute(format!("truncate {}", self.name).as_str())
+            .await
+        {
+            Ok(res) => {
+                return QueryResult {
+                    query: format!("truncate {}", self.name),
+                    result: Ok(res),
+                }
+            }
+            Err(e) => {
+                return QueryResult {
+                    query: format!("truncate {}", self.name),
+                    result: Err(Box::new(e)),
+                }
+            }
+        }
+    }
+    pub async fn query_for_table_entries(
+        &mut self,
+        connection: &mut MySqlConnection,
+    ) -> QueryResult {
+        let res = sqlx::query(format!("select * from {}", self.name).as_str())
+            .fetch_all(connection)
+            .await;
+        match res {
+            Ok(rows) => {
+                for row in rows {
+                    todo!()
+                }
+            }
+            Err(e) => todo!(),
+        }
+        todo!();
+    }
     pub async fn insert_into_table(
         &self,
         connection: &mut MySqlConnection,

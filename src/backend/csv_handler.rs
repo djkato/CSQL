@@ -1,6 +1,6 @@
-use std::{error::Error, sync::Arc};
-
 use super::database_handler::FieldDescription;
+
+use std::{error::Error, sync::Arc};
 
 #[derive(Clone)]
 pub struct ImportedData {
@@ -16,6 +16,7 @@ pub struct DataEntry {
     pub curr_field_description: Option<FieldDescription>,
     pub is_parsed: Option<Result<(), Arc<dyn Error + Send + Sync>>>,
 }
+
 impl ImportedData {
     pub fn load_csv(&mut self) -> Result<(), Box<dyn Error + Send>> {
         match csv::Reader::from_path(self.path.as_str()) {

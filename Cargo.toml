@@ -11,14 +11,17 @@ description = "An assistant tool to easily map a CSV spreadsheets collumns to a 
 [dependencies]
 sqlx = { version = "0.6.2", features = [ "runtime-tokio-native-tls" , "mysql" ] }
 tokio = { version = "1.25.0", features = ["full"] }
-dotenvy = "0.15.6"
-directories = "4.0.1"
+# ["rt", "io-std", "macros", "parking_lot", "sync" ]
+# dotenvy = "0.15.6"
+# directories = "4.0.1"
 csv = "1.1.6"
 egui = "0.21.0"
 eframe = "0.21.0"
 egui_extras = "0.21.0"
 rfd = "0.11.1"
-grid = "0.9.0"
-regex = "1.7.1"
+# need remove_row() and remove_col(), Change back once pull request accepted
+grid = { path = "../grid/grid" }
+# regex = "1.7.1"
 chrono = "0.4.24"
 if_chain = "1.0.2"
+# serde = "1.0.160"
