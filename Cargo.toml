@@ -11,6 +11,8 @@ keywords = ["database", "sql", "ui"]
 categories = ["database", "database-implementations", "text-editors"]
 description = "An assistant tool to easily map a CSV spreadsheets' collumns to a database tables' fields. Great for mass uploading products from a manufacturer provided catalog to an e-shop."
 
+exclude = ["*.sh", "*.sql", "*.csv"]
+
 [dependencies]
 sqlx = { version = "0.6.2", features = ["runtime-tokio-native-tls", "mysql"] }
 tokio = { version = "1.25.0", features = ["full"] }
