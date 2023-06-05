@@ -1,11 +1,5 @@
 -- phpMyAdmin SQL Dump
 -- version 5.2.0
--- https://www.phpmyadmin.net/
---
--- Host: sql9.hostcreators.sk:3314
--- Generation Time: Feb 09, 2023 at 10:54 PM
--- Server version: 8.0.29
--- PHP Version: 8.1.14
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -18,7 +12,6 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `d4952_farbysabr2023`
 --
 
 -- --------------------------------------------------------
